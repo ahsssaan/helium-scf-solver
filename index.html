@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Helium SCF Solver</title>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
 
@@ -272,6 +273,13 @@ hr {
     color: #f87171;
     text-shadow: 0 0 10px rgba(248, 113, 113, 0.3);
 }
+.plot-container {
+    background: rgba(0,0,0,0.25);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    height: 400px;
+}
 </style>
 </head>
 <body>
@@ -288,11 +296,11 @@ hr {
         <div class="input-row">
             <div class="form-group">
                 <label for="M">Number of Basis Functions (M)</label>
-                <input type="number" id="M" placeholder="e.g. 3" min="1">
+                <input type="number" id="M" placeholder="e.g. 2" min="1">
             </div>
             <div class="form-group" style="flex: 2;">
                 <label for="alphas">Alpha values (comma-separated)</label>
-                <input type="text" id="alphas" placeholder="e.g. 0.3, 1.2, 2.5">
+                <input type="text" id="alphas" placeholder="e.g. 1.45, 2.90">
             </div>
         </div>
         <div class="btn-group">
@@ -311,7 +319,11 @@ hr {
     </div>
 
     <div class="panel" id="part2-panel" style="display: none;">
-        <h2>2. SCF Iterations</h2>
+        <h2>2. SCF Iterations & Energy Convergence</h2>
+        
+        <!-- Newly added Plotly graph container -->
+        <div id="plot-energy" class="plot-container" style="margin-bottom: 2rem;"></div>
+        
         <div style="overflow-x: auto;">
             <div id="part2-content"></div>
         </div>
@@ -326,8 +338,8 @@ hr {
 <script>
 // --- UI Helpers ---
 function loadExample() {
-    document.getElementById("M").value = "3";
-    document.getElementById("alphas").value = "0.3, 1.2, 2.5";
+    document.getElementById("M").value = "2";
+    document.getElementById("alphas").value = "1.45, 2.90";
 }
 
 function clearAll() {
@@ -379,6 +391,46 @@ function renderIterations(iterations) {
     return html;
 }
 
+// --- Plotly Helper ---
+function plotEnergyConvergence(id, iterations) {
+    let x = iterations.map(it => it.iter);
+    let y = iterations.map(it => it.E);
+
+    let trace = { 
+        x: x, 
+        y: y, 
+        type: 'scatter', 
+        mode: 'lines+markers', 
+        marker: { color: '#3b82f6', size: 6 }, 
+        line: { color: '#3b82f6', width: 2, shape: 'spline' } 
+    };
+    
+    let layout = {
+        title: {
+            text: 'Total Energy Convergence',
+            font: { color: '#f8fafc', family: 'Inter', size: 18 }
+        },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { color: '#cbd5e1', family: 'Inter' },
+        xaxis: { 
+            title: 'Iteration Number', 
+            gridcolor: 'rgba(255,255,255,0.1)', 
+            zerolinecolor: 'rgba(255,255,255,0.2)',
+            tickmode: 'linear'
+        },
+        yaxis: { 
+            title: 'Energy (Hartrees)', 
+            gridcolor: 'rgba(255,255,255,0.1)', 
+            zerolinecolor: 'rgba(255,255,255,0.2)',
+            tickformat: '.8f'
+        },
+        margin: { t: 60, b: 50, l: 90, r: 30 }
+    };
+
+    Plotly.newPlot(id, [trace], layout, {responsive: true, displayModeBar: false});
+}
+
 // --- Math Primitives ---
 function zeros(n, m = n) {
     return Array(n).fill(0).map(() => Array(m).fill(0));
@@ -412,7 +464,6 @@ function matSub(A, B) {
     return C;
 }
 
-// Jacobi diagonalization for real symmetric matrix
 function jacobi(A_in) {
     let n = A_in.length;
     let A = A_in.map(row => [...row]);
@@ -433,10 +484,7 @@ function jacobi(A_in) {
                 }
             }
         }
-
-        if (max_val < tol) {
-            break;
-        }
+        if (max_val < tol) break;
 
         let diff = A[q][q] - A[p][p];
         let t;
@@ -481,9 +529,7 @@ function jacobi(A_in) {
     for (let i = 0; i < n; i++) eigenVals.push(A[i][i]);
 
     let pairs = [];
-    for (let i = 0; i < n; i++) {
-        pairs.push({ val: eigenVals[i], col: i });
-    }
+    for (let i = 0; i < n; i++) pairs.push({ val: eigenVals[i], col: i });
     pairs.sort((a, b) => a.val - b.val);
 
     let sortedEigenVals = pairs.map(p => p.val);
@@ -496,7 +542,6 @@ function jacobi(A_in) {
     return { eigenvalues: sortedEigenVals, eigenvectors: sortedEigenVecs };
 }
 
-// X = S^(-1/2)
 function buildXMatrix(S) {
     let { eigenvalues, eigenvectors: V } = jacobi(S);
     let n = S.length;
@@ -543,13 +588,7 @@ function buildHcore(alphas, Z=2) {
 
 function buildERI(alphas) {
     let n = alphas.length;
-    let eri = Array(n).fill(0).map(() => 
-        Array(n).fill(0).map(() => 
-            Array(n).fill(0).map(() => 
-                Array(n).fill(0)
-            )
-        )
-    );
+    let eri = Array(n).fill(0).map(() => Array(n).fill(0).map(() => Array(n).fill(0).map(() => Array(n).fill(0))));
     for(let p=0; p<n; p++) {
         for(let q=0; q<n; q++) {
             for(let r=0; r<n; r++) {
@@ -591,7 +630,6 @@ function runSCF(alphas, M) {
     let converged = false;
 
     for (let iter = 1; iter <= max_iter; iter++) {
-        // Build Fock matrix F(p,q) = h(p,q) + sum_r sum_t c(r)c(t) eri(p,q,r,t)
         let F = zeros(M);
         for(let p=0; p<M; p++) {
             for(let q=0; q<M; q++) {
@@ -604,18 +642,13 @@ function runSCF(alphas, M) {
             }
         }
 
-        // F' = X F X
         let F_prime = matMul(X, matMul(F, X));
-
-        // Diagonalize
         let { eigenvalues, eigenvectors } = jacobi(F_prime);
         let eps1 = eigenvalues[0];
         
-        // Take corresponding eigenvector c'
         let c_prime = Array(M).fill(0);
         for(let i=0; i<M; i++) c_prime[i] = eigenvectors[i][0];
 
-        // c = X c'
         let c_new = Array(M).fill(0);
         for(let i=0; i<M; i++) {
             for(let j=0; j<M; j++) {
@@ -623,7 +656,6 @@ function runSCF(alphas, M) {
             }
         }
 
-        // Normalize using c^T S c = 1
         let normSq = 0;
         for(let p=0; p<M; p++) {
             for(let q=0; q<M; q++) {
@@ -633,14 +665,11 @@ function runSCF(alphas, M) {
         let norm = Math.sqrt(normSq);
         for(let i=0; i<M; i++) c_new[i] /= norm;
 
-        // Enforce sign convention
         if (c_new[0] < 0) {
             for(let i=0; i<M; i++) c_new[i] *= -1.0;
         }
-
         c = c_new;
 
-        // Density R
         let R = zeros(M);
         for(let p=0; p<M; p++) {
             for(let q=0; q<M; q++) {
@@ -648,7 +677,6 @@ function runSCF(alphas, M) {
             }
         }
 
-        // Energies
         let I1 = 0;
         for(let p=0; p<M; p++) {
             for(let q=0; q<M; q++) {
@@ -670,15 +698,7 @@ function runSCF(alphas, M) {
         let E = 2.0 * I1 + J11;
         let dE = Math.abs(E - E_old);
 
-        iterations.push({
-            iter,
-            c: [...c],
-            eps1,
-            I1,
-            J11,
-            E,
-            dE
-        });
+        iterations.push({ iter, c: [...c], eps1, I1, J11, E, dE });
 
         if (iter > 1 && dE < threshold) {
             converged = true;
@@ -687,12 +707,7 @@ function runSCF(alphas, M) {
         E_old = E;
     }
 
-    return {
-        S, X, h, eri,
-        c,
-        iterations,
-        converged
-    };
+    return { S, X, h, eri, c, iterations, converged };
 }
 
 function computeChecks(S, F, c, eps1, J11) {
@@ -757,10 +772,8 @@ function main() {
         let { M, alphas } = parseInput();
         alphas.sort((a, b) => a - b);
         
-        // --- Core Algorithm ---
         let res = runSCF(alphas, M);
         
-        // Compute final F matrix to pass into part 3 checks
         let F_final = zeros(M);
         for(let p=0; p<M; p++) {
             for(let q=0; q<M; q++) {
@@ -776,12 +789,10 @@ function main() {
         let last_it = res.iterations[res.iterations.length - 1];
         let checks = computeChecks(res.S, F_final, res.c, last_it.eps1, last_it.J11);
 
-        // --- Render UI ---
         let p1 = document.getElementById("part1-panel");
         let p2 = document.getElementById("part2-panel");
         let p3 = document.getElementById("part3-panel");
 
-        // Force reflow to re-trigger animations
         p1.classList.remove("animate-in");
         p2.classList.remove("animate-in");
         p3.classList.remove("animate-in");
@@ -813,6 +824,7 @@ function main() {
         document.getElementById("part1-content").innerHTML = matHtml;
 
         // Part 2
+        plotEnergyConvergence('plot-energy', res.iterations);
         document.getElementById("part2-content").innerHTML = renderIterations(res.iterations);
 
         // Part 3
